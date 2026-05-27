@@ -1,0 +1,17 @@
+# macOS
+._*
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Audio library — users bring their own
+GUIDE CUES/
+
+# macOS app wrapper
+Cue Creator.app/
+
+# Build/dist artifacts
+dist/
+
+# Claude Code internal
+.claude/

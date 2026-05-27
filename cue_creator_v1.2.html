@@ -1,0 +1,1620 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Cue Creator</title>
+  <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/fuse.js@7.0.0/dist/fuse.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dexie@3.2.4/dist/dexie.min.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 20px; }
+    table { border-collapse: collapse; width: 100%; margin-top: 20px; }
+    td, th { border: 1px solid #ccc; padding: 8px; text-align: left; }
+    th { background: #f0f0f0; }
+    input { width: 100%; box-sizing: border-box; }
+    select { width: 100%; }
+    .section { margin-bottom: 20px; padding: 12px; border: 1px solid #ddd;
+               border-radius: 4px; background: #fafafa; }
+    .section h3 { margin-top: 0; }
+    .cue-tag { display: inline-block; background: #e0e0e0; padding: 2px 8px;
+               margin: 2px; border-radius: 3px; font-size: 12px; }
+    .match-good { background: #d4edda; }
+    .match-ok   { background: #fff3cd; }
+    .match-bad  { background: #f8d7da; }
+    #log { background: #111; color: #0f0; padding: 12px; font-family: monospace;
+           font-size: 12px; max-height: 200px; overflow-y: auto; white-space: pre-wrap;
+           margin-top: 10px; border-radius: 4px; }
+    #timelineControls { display: flex; align-items: center; gap: 8px;
+                        margin-top: 12px; margin-bottom: 4px; font-size: 13px; }
+    #timelineControls button { padding: 2px 10px; font-size: 13px; cursor: pointer; }
+    .tl-legend-dot { display: inline-block; width: 12px; height: 12px;
+                     border-radius: 2px; margin-right: 5px; vertical-align: middle; }
+    #timelineWrapper { overflow-x: auto; border-radius: 6px;
+                       border: 1px solid #333; background: #1a1a1a; }
+    #timeline { display: block; cursor: crosshair; }
+    #folderStatus { font-size: 13px; color: #555; margin-left: 10px; vertical-align: middle; }
+    #folderStatus.ok    { color: #2a7a2a; }
+    #folderStatus.error { color: #aa2222; }
+  </style>
+</head>
+<body>
+
+<div style="display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:8px">
+  <h2 data-i18n="appTitle">Cue Creator</h2>
+  <span style="font-size:13px;white-space:nowrap">
+    <label for="uiLangSelect" data-i18n="uiLanguageLabel">Display Language:</label>
+    <select id="uiLangSelect" onchange="applyUILanguage(this.value)" style="width:auto;margin-left:4px">
+      <option value="English">English</option>
+      <option value="Korean">한국어</option>
+      <option value="Tagalog">Tagalog</option>
+      <option value="Indonesian">Indonesian</option>
+      <option value="French">Français</option>
+      <option value="Spanish">Español</option>
+      <option value="Portuguese">Português</option>
+    </select>
+  </span>
+</div>
+
+<!-- STEP 1: Folder + Language -->
+<div class="section">
+  <h3 data-i18n="step1">Step 1: Load your cue library</h3>
+  <p style="font-size:13px;color:#555;margin-top:0" data-i18n="step1desc">
+    Select the folder that contains the <strong>GUIDE CUES</strong> subfolder.
+  </p>
+  <!-- Hidden input for Firefox webkitdirectory fallback -->
+  <input type="file" id="folderInput" webkitdirectory style="display:none"
+         onchange="handleFolderPick(this.files)">
+  <button id="selectFolderBtn" onclick="selectFolder()" data-i18n="selectFolder">Select Folder&hellip;</button>
+  <button id="allowAccessBtn" onclick="requestFolderAccess()" style="display:none" data-i18n="allowAccess">Allow Access to Previous Folder</button>
+  <button id="refreshCacheBtn" onclick="refreshCache()" style="display:none" data-i18n="changeFolder">Change Folder</button>
+  <span id="folderStatus"></span>
+  <p style="margin-top:12px"><strong data-i18n="languageLabel">Language:</strong>
+    <select id="languageSelect" onchange="switchLanguage(this.value)">
+      <option value="English">English</option>
+    </select>
+  </p>
+  <div id="cueList"></div>
+</div>
+
+<!-- STEP 2: ALS -->
+<div class="section">
+  <h3 data-i18n="step2">Step 2: Load Ableton session</h3>
+  <input type="file" id="alsFile" accept=".als" onchange="processALS()">
+  <button id="previewBtn" onclick="previewAudio()" title="Preview / Stop">
+    <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" style="vertical-align:middle;margin-right:4px"><polygon points="5,3 19,12 5,21"/></svg>Preview
+  </button>
+  <button onclick="renderWAV()" data-i18n="renderWAV">Render WAV</button>
+</div>
+
+<div id="timelineControls">
+  <span><span class="tl-legend-dot" style="background:#4488ff"></span><span data-i18n="legendLocator">Locator</span></span>
+  <span style="margin-left:8px"><span class="tl-legend-dot" style="background:#ff4444"></span><span data-i18n="legendCue">Cue (1 bar before)</span></span>
+  <span style="margin-left:auto" data-i18n="zoom">Zoom:</span>
+  <button onclick="zoomTimeline(1.4)">+</button>
+  <button onclick="zoomTimeline(1/1.4)">&minus;</button>
+  <button onclick="resetZoom()" data-i18n="reset">Reset</button>
+  <button id="followBtn" onclick="toggleFollow()" style="margin-left:8px" data-i18n="followOn">Follow Playhead: ON</button>
+</div>
+<div id="timelineWrapper">
+  <canvas id="timeline" height="260"></canvas>
+</div>
+
+<div style="margin-top:12px;margin-bottom:6px">
+  <button onclick="applyAllSuggestions()" data-i18n="applyAll">Apply All Locator Suggestions</button>
+  <button onclick="exportFixedALS()" style="margin-left:6px" data-i18n="exportALS">Export Fixed .als</button>
+</div>
+
+<table id="cueTable">
+  <thead>
+    <tr>
+      <th data-i18n="thLocator">Locator</th><th data-i18n="thBeat">Beat</th><th data-i18n="thBarLength">Bar Length</th>
+      <th data-i18n="thCueBeat">Cue Beat</th><th data-i18n="thFixedName">Fixed Name</th><th data-i18n="thAudioCue">Audio Cue</th><th data-i18n="thConfidence">Confidence</th>
+    </tr>
+  </thead>
+  <tbody></tbody>
+</table>
+
+<div id="log"></div>
+
+<script>
+
+// ---- GLOBALS ----
+
+let data = { time_signatures: [], locators: [] };
+let cueLibrary = [];
+let canonicalNames = [];
+let cueFileMap = {};
+let fuse = null;
+let sessionBPM = 120;
+let sessionTempoEvents = []; // [{beat, bpm}, ...] — piecewise tempo map
+let currentLanguage = "English";
+
+let countoffFileMap = {};
+let sessionTimeSig = "4/4";
+
+let previewCtx = null;
+let previewSources = [];
+let previewStartContextTime = 0;
+let previewSeekOffset = 0;
+let previewAnimFrame = null;
+let isPlaying = false;
+let previewSchedule = [];
+let previewMaxDuration = 0;
+
+let timelineZoom = 1.0;
+const BASE_PX_PER_BEAT = 22;
+let followPlayhead = true;
+
+// Per-time-sig count-off beat schedules. Section cue (Intro) is handled separately
+// and is NOT listed here — see COUNT_OFF_SECTION_CUE_BEAT.
+const COUNT_OFF_SCHEDULES = {
+  "3/4":  [{beat:0,num:"1"},{beat:1,num:"2"},{beat:2,num:"3"},
+           {beat:4,num:"2"},{beat:5,num:"3"}],
+  "4/4":  [{beat:0,num:"1"},{beat:2,num:"2"},
+           {beat:5,num:"2"},{beat:6,num:"3"},{beat:7,num:"4"}],
+  "6/8":  [{beat:0,num:"1"},{beat:1.5,num:"2"},
+           {beat:3.5,num:"2"},{beat:4,num:"3"},{beat:4.5,num:"4"},{beat:5,num:"5"},{beat:5.5,num:"6"}],
+  "12/8": [{beat:0,num:"1"},{beat:3,num:"2"},
+           {beat:7.5,num:"2"},{beat:9,num:"3"},{beat:10.5,num:"4"}]
+};
+// Quarter-note beat where the first section cue plays (the "Intro" slot in measure 2)
+const COUNT_OFF_SECTION_CUE_BEAT = {"3/4":3,"4/4":4,"6/8":3,"12/8":6};
+
+const AUDIO_EXT = new Set(["wav", "aif", "aiff", "mp3"]);
+
+let alsXmlText = null;
+let alsFileName = null;
+
+// ---- UI TRANSLATIONS ----
+
+let currentUILanguage = "English";
+
+const UI_TRANSLATIONS = {
+  "English": {
+    appTitle:"Cue Creator", step1:"Step 1: Load your cue library",
+    step1desc:"Select the folder that contains the <strong>GUIDE CUES</strong> subfolder.",
+    selectFolder:"Select Folder…", allowAccess:"Allow Access to Previous Folder",
+    changeFolder:"Change Folder", languageLabel:"Language:", uiLanguageLabel:"Display Language:",
+    step2:"Step 2: Load Ableton session", preview:"Preview", stop:"Stop", renderWAV:"Render WAV",
+    legendLocator:"Locator", legendCue:"Cue (1 bar before)", zoom:"Zoom:", reset:"Reset",
+    followOn:"Follow Playhead: ON", followOff:"Follow Playhead: OFF",
+    applyAll:"Apply All Locator Suggestions", exportALS:"Export Fixed .als",
+    thLocator:"Locator", thBeat:"Beat", thBarLength:"Bar Length", thCueBeat:"Cue Beat",
+    thFixedName:"Fixed Name", thAudioCue:"Audio Cue", thConfidence:"Confidence",
+    noMatch:"(no match)", fallback:"fallback",
+    statusProcessing:"Processing {count} files...", statusNoLang:"No language folders found. Select the folder containing GUIDE CUES/.",
+    statusSaving:"Saving to cache...", statusChecking:"Checking cache...", statusCacheCleared:"Cache cleared.",
+    statusScanning:"Scanning {name}...", statusNoLangFS:"No language folders found. Confirm GUIDE CUES/ is inside the selected folder.",
+    statusLoaded:"✓ {label} — {count} language(s)", statusPrevFolder:"Previous folder: {name}",
+    statusDenied:"Access denied. Select a different folder.",
+    alertNoALS:"No .als file loaded.", alertNoCueData:"No cue data. Load an .als file first.",
+    alertNoCuesLoaded:"No audio cues loaded. Select a folder first.", alertNoCues:"No cues to preview.",
+    alertNoCueDataRender:"No cue data. Load an .als file first.", alertNoCuesLoadedRender:"No audio cues loaded. Select a folder first.",
+    alertNoRender:"No matched audio cues to render."
+  },
+  "Korean": {
+    appTitle:"큐 크리에이터", step1:"1단계: 큐 라이브러리 불러오기",
+    step1desc:"<strong>GUIDE CUES</strong> 폴더가 포함된 폴더를 선택하세요.",
+    selectFolder:"폴더 선택…", allowAccess:"이전 폴더 접근 허용",
+    changeFolder:"폴더 변경", languageLabel:"언어:", uiLanguageLabel:"표시 언어:",
+    step2:"2단계: Ableton 세션 불러오기", preview:"미리듣기", stop:"정지", renderWAV:"WAV 렌더링",
+    legendLocator:"로케이터", legendCue:"큐 (1마디 전)", zoom:"확대/축소:", reset:"초기화",
+    followOn:"재생 위치 따라가기: 켜짐", followOff:"재생 위치 따라가기: 꺼짐",
+    applyAll:"모든 로케이터 제안 적용", exportALS:"수정된 .als 내보내기",
+    thLocator:"로케이터", thBeat:"박자", thBarLength:"마디 길이", thCueBeat:"큐 박자",
+    thFixedName:"수정된 이름", thAudioCue:"오디오 큐", thConfidence:"일치도",
+    noMatch:"(일치 없음)", fallback:"대체",
+    statusProcessing:"{count}개 파일 처리 중...", statusNoLang:"언어 폴더를 찾을 수 없습니다. GUIDE CUES/ 폴더가 있는 폴더를 선택하세요.",
+    statusSaving:"캐시 저장 중...", statusChecking:"캐시 확인 중...", statusCacheCleared:"캐시가 삭제되었습니다.",
+    statusScanning:"{name} 스캔 중...", statusNoLangFS:"언어 폴더를 찾을 수 없습니다. 선택한 폴더 안에 GUIDE CUES/가 있는지 확인하세요.",
+    statusLoaded:"✓ {label} — {count}개 언어", statusPrevFolder:"이전 폴더: {name}",
+    statusDenied:"접근이 거부되었습니다. 다른 폴더를 선택하세요.",
+    alertNoALS:".als 파일이 로드되지 않았습니다.", alertNoCueData:"큐 데이터가 없습니다. 먼저 .als 파일을 불러오세요.",
+    alertNoCuesLoaded:"오디오 큐가 로드되지 않았습니다. 먼저 폴더를 선택하세요.", alertNoCues:"미리볼 큐가 없습니다.",
+    alertNoCueDataRender:"큐 데이터가 없습니다. 먼저 .als 파일을 불러오세요.", alertNoCuesLoadedRender:"오디오 큐가 로드되지 않았습니다. 먼저 폴더를 선택하세요.",
+    alertNoRender:"렌더링할 오디오 큐가 없습니다."
+  },
+  "Tagalog": {
+    appTitle:"Cue Creator", step1:"Hakbang 1: I-load ang cue library",
+    step1desc:"Piliin ang folder na naglalaman ng subfolder na <strong>GUIDE CUES</strong>.",
+    selectFolder:"Piliin ang Folder…", allowAccess:"Payagan ang Access sa Nakaraang Folder",
+    changeFolder:"Palitan ang Folder", languageLabel:"Wika:", uiLanguageLabel:"Wika ng Display:",
+    step2:"Hakbang 2: I-load ang Ableton session", preview:"I-preview", stop:"Itigil", renderWAV:"I-render ang WAV",
+    legendLocator:"Locator", legendCue:"Cue (1 bar bago)", zoom:"Zoom:", reset:"I-reset",
+    followOn:"Sundan ang Playhead: BUKAS", followOff:"Sundan ang Playhead: SARADO",
+    applyAll:"Ilapat ang Lahat ng Mungkahi", exportALS:"I-export ang Fixed .als",
+    thLocator:"Locator", thBeat:"Beat", thBarLength:"Haba ng Bar", thCueBeat:"Cue Beat",
+    thFixedName:"Pinagandang Pangalan", thAudioCue:"Audio Cue", thConfidence:"Katumpakan",
+    noMatch:"(walang tugma)", fallback:"panghalili",
+    statusProcessing:"Pinoproseso ang {count} na file...", statusNoLang:"Walang nahanap na folder ng wika. Piliin ang folder na naglalaman ng GUIDE CUES/.",
+    statusSaving:"Nag-iimbak sa cache...", statusChecking:"Sinusuri ang cache...", statusCacheCleared:"Na-clear ang cache.",
+    statusScanning:"Sinescan ang {name}...", statusNoLangFS:"Walang nahanap na folder ng wika. Tiyaking nasa loob ng napiling folder ang GUIDE CUES/.",
+    statusLoaded:"✓ {label} — {count} wika", statusPrevFolder:"Nakaraang folder: {name}",
+    statusDenied:"Tinanggihan ang access. Pumili ng ibang folder.",
+    alertNoALS:"Walang .als file na na-load.", alertNoCueData:"Walang cue data. Mag-load muna ng .als file.",
+    alertNoCuesLoaded:"Walang na-load na audio cue. Pumili muna ng folder.", alertNoCues:"Walang cue para i-preview.",
+    alertNoCueDataRender:"Walang cue data. Mag-load muna ng .als file.", alertNoCuesLoadedRender:"Walang na-load na audio cue. Pumili muna ng folder.",
+    alertNoRender:"Walang katugmang audio cue para i-render."
+  },
+  "Indonesian": {
+    appTitle:"Cue Creator", step1:"Langkah 1: Muat perpustakaan cue",
+    step1desc:"Pilih folder yang berisi subfolder <strong>GUIDE CUES</strong>.",
+    selectFolder:"Pilih Folder…", allowAccess:"Izinkan Akses ke Folder Sebelumnya",
+    changeFolder:"Ganti Folder", languageLabel:"Bahasa:", uiLanguageLabel:"Bahasa Tampilan:",
+    step2:"Langkah 2: Muat sesi Ableton", preview:"Pratinjau", stop:"Berhenti", renderWAV:"Render WAV",
+    legendLocator:"Locator", legendCue:"Cue (1 bar sebelumnya)", zoom:"Zoom:", reset:"Reset",
+    followOn:"Ikuti Playhead: AKTIF", followOff:"Ikuti Playhead: NONAKTIF",
+    applyAll:"Terapkan Semua Saran Locator", exportALS:"Ekspor .als yang Diperbaiki",
+    thLocator:"Locator", thBeat:"Ketukan", thBarLength:"Panjang Bar", thCueBeat:"Ketukan Cue",
+    thFixedName:"Nama yang Diperbaiki", thAudioCue:"Audio Cue", thConfidence:"Kepercayaan",
+    noMatch:"(tidak ada kecocokan)", fallback:"cadangan",
+    statusProcessing:"Memproses {count} file...", statusNoLang:"Folder bahasa tidak ditemukan. Pilih folder yang berisi GUIDE CUES/.",
+    statusSaving:"Menyimpan ke cache...", statusChecking:"Memeriksa cache...", statusCacheCleared:"Cache dihapus.",
+    statusScanning:"Memindai {name}...", statusNoLangFS:"Folder bahasa tidak ditemukan. Pastikan GUIDE CUES/ ada di dalam folder yang dipilih.",
+    statusLoaded:"✓ {label} — {count} bahasa", statusPrevFolder:"Folder sebelumnya: {name}",
+    statusDenied:"Akses ditolak. Pilih folder lain.",
+    alertNoALS:"Tidak ada file .als yang dimuat.", alertNoCueData:"Tidak ada data cue. Muat file .als terlebih dahulu.",
+    alertNoCuesLoaded:"Tidak ada audio cue yang dimuat. Pilih folder terlebih dahulu.", alertNoCues:"Tidak ada cue untuk dipratinjau.",
+    alertNoCueDataRender:"Tidak ada data cue. Muat file .als terlebih dahulu.", alertNoCuesLoadedRender:"Tidak ada audio cue yang dimuat. Pilih folder terlebih dahulu.",
+    alertNoRender:"Tidak ada audio cue yang cocok untuk dirender."
+  },
+  "French": {
+    appTitle:"Cue Creator", step1:"Étape 1 : Charger la bibliothèque de cues",
+    step1desc:"Sélectionnez le dossier contenant le sous-dossier <strong>GUIDE CUES</strong>.",
+    selectFolder:"Sélectionner un dossier…", allowAccess:"Autoriser l’accès au dossier précédent",
+    changeFolder:"Changer de dossier", languageLabel:"Langue :", uiLanguageLabel:"Langue d’affichage :",
+    step2:"Étape 2 : Charger la session Ableton", preview:"Aperçu", stop:"Arrêter", renderWAV:"Rendre en WAV",
+    legendLocator:"Repère", legendCue:"Cue (1 mesure avant)", zoom:"Zoom :", reset:"Réinitialiser",
+    followOn:"Suivre la lecture : OUI", followOff:"Suivre la lecture : NON",
+    applyAll:"Appliquer toutes les suggestions", exportALS:"Exporter le .als corrigé",
+    thLocator:"Repère", thBeat:"Temps", thBarLength:"Longueur de mesure", thCueBeat:"Temps du cue",
+    thFixedName:"Nom corrigé", thAudioCue:"Cue audio", thConfidence:"Fiabilité",
+    noMatch:"(aucune correspondance)", fallback:"substitut",
+    statusProcessing:"Traitement de {count} fichiers...", statusNoLang:"Aucun dossier de langue trouvé. Sélectionnez le dossier contenant GUIDE CUES/.",
+    statusSaving:"Enregistrement en cache...", statusChecking:"Vérification du cache...", statusCacheCleared:"Cache effacé.",
+    statusScanning:"Analyse de {name}...", statusNoLangFS:"Aucun dossier de langue trouvé. Vérifiez que GUIDE CUES/ se trouve dans le dossier sélectionné.",
+    statusLoaded:"✓ {label} — {count} langue(s)", statusPrevFolder:"Dossier précédent : {name}",
+    statusDenied:"Accès refusé. Sélectionnez un autre dossier.",
+    alertNoALS:"Aucun fichier .als chargé.", alertNoCueData:"Aucune donnée de cue. Chargez d’abord un fichier .als.",
+    alertNoCuesLoaded:"Aucun cue audio chargé. Sélectionnez d’abord un dossier.", alertNoCues:"Aucun cue à prévisualiser.",
+    alertNoCueDataRender:"Aucune donnée de cue. Chargez d’abord un fichier .als.", alertNoCuesLoadedRender:"Aucun cue audio chargé. Sélectionnez d’abord un dossier.",
+    alertNoRender:"Aucun cue audio correspondant à rendre."
+  },
+  "Spanish": {
+    appTitle:"Cue Creator", step1:"Paso 1: Cargar biblioteca de cues",
+    step1desc:"Selecciona la carpeta que contiene la subcarpeta <strong>GUIDE CUES</strong>.",
+    selectFolder:"Seleccionar carpeta…", allowAccess:"Permitir acceso a la carpeta anterior",
+    changeFolder:"Cambiar carpeta", languageLabel:"Idioma:", uiLanguageLabel:"Idioma de interfaz:",
+    step2:"Paso 2: Cargar sesión de Ableton", preview:"Vista previa", stop:"Detener", renderWAV:"Renderizar WAV",
+    legendLocator:"Marcador", legendCue:"Cue (1 compás antes)", zoom:"Zoom:", reset:"Restablecer",
+    followOn:"Seguir cabezal: ACTIVADO", followOff:"Seguir cabezal: DESACTIVADO",
+    applyAll:"Aplicar todas las sugerencias", exportALS:"Exportar .als corregido",
+    thLocator:"Marcador", thBeat:"Tiempo", thBarLength:"Longitud de compás", thCueBeat:"Tiempo del cue",
+    thFixedName:"Nombre corregido", thAudioCue:"Cue de audio", thConfidence:"Confianza",
+    noMatch:"(sin coincidencia)", fallback:"alternativo",
+    statusProcessing:"Procesando {count} archivos...", statusNoLang:"No se encontraron carpetas de idioma. Selecciona la carpeta que contiene GUIDE CUES/.",
+    statusSaving:"Guardando en caché...", statusChecking:"Verificando caché...", statusCacheCleared:"Caché eliminado.",
+    statusScanning:"Escaneando {name}...", statusNoLangFS:"No se encontraron carpetas de idioma. Confirma que GUIDE CUES/ está dentro de la carpeta seleccionada.",
+    statusLoaded:"✓ {label} — {count} idioma(s)", statusPrevFolder:"Carpeta anterior: {name}",
+    statusDenied:"Acceso denegado. Selecciona una carpeta diferente.",
+    alertNoALS:"No hay archivo .als cargado.", alertNoCueData:"Sin datos de cue. Carga un archivo .als primero.",
+    alertNoCuesLoaded:"No hay cues de audio cargados. Selecciona una carpeta primero.", alertNoCues:"No hay cues para previsualizar.",
+    alertNoCueDataRender:"Sin datos de cue. Carga un archivo .als primero.", alertNoCuesLoadedRender:"No hay cues de audio cargados. Selecciona una carpeta primero.",
+    alertNoRender:"No hay cues de audio coincidentes para renderizar."
+  },
+  "Portuguese": {
+    appTitle:"Cue Creator", step1:"Passo 1: Carregar biblioteca de cues",
+    step1desc:"Selecione a pasta que contém a subpasta <strong>GUIDE CUES</strong>.",
+    selectFolder:"Selecionar pasta…", allowAccess:"Permitir acesso à pasta anterior",
+    changeFolder:"Alterar pasta", languageLabel:"Idioma:", uiLanguageLabel:"Idioma da interface:",
+    step2:"Passo 2: Carregar sessão do Ableton", preview:"Pré-visualizar", stop:"Parar", renderWAV:"Renderizar WAV",
+    legendLocator:"Marcador", legendCue:"Cue (1 compasso antes)", zoom:"Zoom:", reset:"Redefinir",
+    followOn:"Seguir reprodução: ATIVADO", followOff:"Seguir reprodução: DESATIVADO",
+    applyAll:"Aplicar todas as sugestões", exportALS:"Exportar .als corrigido",
+    thLocator:"Marcador", thBeat:"Tempo", thBarLength:"Comprimento do compasso", thCueBeat:"Tempo do cue",
+    thFixedName:"Nome corrigido", thAudioCue:"Cue de áudio", thConfidence:"Confiança",
+    noMatch:"(sem correspondência)", fallback:"substituto",
+    statusProcessing:"Processando {count} arquivos...", statusNoLang:"Nenhuma pasta de idioma encontrada. Selecione a pasta que contém GUIDE CUES/.",
+    statusSaving:"Salvando no cache...", statusChecking:"Verificando cache...", statusCacheCleared:"Cache limpo.",
+    statusScanning:"Escaneando {name}...", statusNoLangFS:"Nenhuma pasta de idioma encontrada. Confirme que GUIDE CUES/ está dentro da pasta selecionada.",
+    statusLoaded:"✓ {label} — {count} idioma(s)", statusPrevFolder:"Pasta anterior: {name}",
+    statusDenied:"Acesso negado. Selecione uma pasta diferente.",
+    alertNoALS:"Nenhum arquivo .als carregado.", alertNoCueData:"Sem dados de cue. Carregue um arquivo .als primeiro.",
+    alertNoCuesLoaded:"Nenhum cue de áudio carregado. Selecione uma pasta primeiro.", alertNoCues:"Sem cues para pré-visualizar.",
+    alertNoCueDataRender:"Sem dados de cue. Carregue um arquivo .als primeiro.", alertNoCuesLoadedRender:"Nenhum cue de áudio carregado. Selecione uma pasta primeiro.",
+    alertNoRender:"Nenhum cue de áudio correspondente para renderizar."
+  }
+};
+
+function t(key, vars) {
+  const dict = UI_TRANSLATIONS[currentUILanguage] || UI_TRANSLATIONS["English"];
+  let str = dict[key] !== undefined ? dict[key] : (UI_TRANSLATIONS["English"][key] || key);
+  if (vars) Object.entries(vars).forEach(([k, v]) => { str = str.replace("{" + k + "}", v); });
+  return str;
+}
+
+function applyUILanguage(lang) {
+  currentUILanguage = lang;
+  document.querySelectorAll("[data-i18n]").forEach(el => {
+    el.innerHTML = t(el.getAttribute("data-i18n"));
+  });
+  const followBtn = document.getElementById("followBtn");
+  if (followBtn) followBtn.innerHTML = t(followPlayhead ? "followOn" : "followOff");
+  if (!isPlaying) {
+    const previewBtn = document.getElementById("previewBtn");
+    if (previewBtn) previewBtn.innerHTML = SVG_PLAY + t("preview");
+  }
+  if (data.locators.length > 0) drawTable();
+}
+
+// ---- DEXIE (Firefox persistence) ----
+
+const db = new Dexie("guideCueEditor");
+db.version(1).stores({
+  meta:         "key",
+  cueFiles:     "id, lang",
+  countoffFiles:"id, lang, timesig"
+});
+db.version(2).stores({
+  countoffFiles: null
+});
+
+async function saveFilesToDexie(fileList, manifest) {
+  const cueBatch = [];
+
+  for (const file of fileList) {
+    const parts = file.webkitRelativePath.split("/");
+    if (parts.length < 5) continue;
+    if (parts[1] !== "GUIDE CUES" || parts[3] !== "Song Sections") continue;
+    const langFolder = parts[2];
+    if (!langFolder.endsWith(" Cues") || langFolder.startsWith(".")) continue;
+    const langName = langFolder.replace(" Cues", "");
+    const fname = parts[4];
+    if (!manifest.cues[langName] || !manifest.cues[langName].includes(fname)) continue;
+    cueBatch.push({ id: langName + "||" + fname, lang: langName, filename: fname, blob: file });
+  }
+
+  const folderName = fileList[0] ? fileList[0].webkitRelativePath.split("/")[0] : "library";
+  await db.transaction("rw", db.meta, db.cueFiles, async () => {
+    await db.meta.put({ key: "folderName", value: folderName });
+    await db.cueFiles.clear();
+    await db.cueFiles.bulkAdd(cueBatch);
+  });
+  log("Cached " + cueBatch.length + " cue files.");
+}
+
+async function loadFromDexie() {
+  try {
+    if (await db.cueFiles.count() === 0) return null;
+
+    window._cueFiles = {};
+
+    for (const rec of await db.cueFiles.toArray()) {
+      if (!window._cueFiles[rec.lang]) window._cueFiles[rec.lang] = {};
+      window._cueFiles[rec.lang][rec.filename] =
+        new File([rec.blob], rec.filename, { type: rec.blob.type || "audio/wav" });
+    }
+
+    const manifest = { languages: [], cues: {} };
+    for (const lang in window._cueFiles) {
+      manifest.languages.push(lang);
+      manifest.cues[lang] = Object.keys(window._cueFiles[lang]).sort();
+    }
+    manifest.languages.sort();
+
+    const meta = await db.meta.get("folderName");
+    manifest._folderName = meta ? meta.value : "library";
+    return manifest;
+  } catch(e) { log("Dexie load error: " + e.message); return null; }
+}
+
+async function refreshCache() {
+  await db.transaction("rw", db.meta, db.cueFiles, async () => {
+    await db.meta.clear(); await db.cueFiles.clear();
+  });
+  window._cueFiles = null; window._manifest = null;
+  document.getElementById("refreshCacheBtn").style.display = "none";
+  setFolderStatus(t("statusCacheCleared"));
+  document.getElementById("folderInput").value = "";
+  document.getElementById("folderInput").click();
+}
+
+// ---- INDEXEDDB (Chrome/Edge handle persistence) ----
+
+function openHandleDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open("guideCueEditorHandles", 1);
+    req.onupgradeneeded = e => e.target.result.createObjectStore("handles");
+    req.onsuccess = e => resolve(e.target.result);
+    req.onerror = e => reject(e.target.error);
+  });
+}
+
+async function saveRootHandle(handle) {
+  try {
+    const db2 = await openHandleDB();
+    await new Promise((resolve, reject) => {
+      const tx = db2.transaction("handles", "readwrite");
+      tx.objectStore("handles").put(handle, "root");
+      tx.oncomplete = resolve; tx.onerror = e => reject(e.target.error);
+    });
+  } catch(e) { /* non-fatal */ }
+}
+
+async function loadSavedHandle() {
+  try {
+    const db2 = await openHandleDB();
+    return await new Promise((resolve, reject) => {
+      const tx = db2.transaction("handles", "readonly");
+      const req = tx.objectStore("handles").get("root");
+      req.onsuccess = e => resolve(e.target.result || null);
+      req.onerror = () => resolve(null);
+    });
+  } catch(e) { return null; }
+}
+
+// ---- UNIFIED FILE ACCESS ----
+async function getCueFile(lang, filename) {
+  if (window._cueHandles && window._cueHandles[lang] && window._cueHandles[lang][filename])
+    return await window._cueHandles[lang][filename].getFile();
+  if (window._cueFiles && window._cueFiles[lang])
+    return window._cueFiles[lang][filename] || null;
+  return null;
+}
+
+// ---- FOLDER SELECTION ----
+
+function setFolderStatus(msg, cls) {
+  const el = document.getElementById("folderStatus");
+  el.textContent = msg; el.className = cls || "";
+}
+
+async function selectFolder() {
+  if ("showDirectoryPicker" in window) {
+    try {
+      const handle = await window.showDirectoryPicker({ mode: "read" });
+      await saveRootHandle(handle);
+      await initFromRoot(handle);
+    } catch(e) { if (e.name !== "AbortError") log("ERROR: " + e.message); }
+  } else {
+    document.getElementById("folderInput").click();
+  }
+}
+
+async function requestFolderAccess() {
+  if (!window._savedHandle) return;
+  try {
+    const perm = await window._savedHandle.requestPermission({ mode: "read" });
+    if (perm === "granted") {
+      document.getElementById("allowAccessBtn").style.display = "none";
+      await initFromRoot(window._savedHandle);
+    } else {
+      setFolderStatus(t("statusDenied"), "error");
+    }
+  } catch(e) { log("ERROR: " + e.message); }
+}
+
+// Firefox: called by the hidden <input webkitdirectory> onchange
+async function handleFolderPick(fileList) {
+  if (!fileList || fileList.length === 0) return;
+  setFolderStatus(t("statusProcessing", {count: fileList.length}));
+  log("Processing " + fileList.length + " files...");
+
+  const manifest = buildManifestFromFileList(fileList);
+  if (manifest.languages.length === 0) {
+    setFolderStatus(t("statusNoLang"), "error");
+    return;
+  }
+
+  setFolderStatus(t("statusSaving"));
+  await saveFilesToDexie(fileList, manifest);
+
+  window._manifest = manifest;
+  const folderName = fileList[0].webkitRelativePath.split("/")[0];
+  await populateFromManifest(manifest, folderName);
+  document.getElementById("refreshCacheBtn").style.display = "inline-block";
+}
+
+// ---- MANIFEST BUILDING ----
+
+// FS API path: scan directory handles
+async function buildManifestFromFS(rootHandle) {
+  const manifest = { languages: [], cues: {} };
+  window._cueHandles = {};
+
+  let guideCuesHandle;
+  try { guideCuesHandle = await rootHandle.getDirectoryHandle("GUIDE CUES"); }
+  catch(e) { log("WARNING: GUIDE CUES/ not found in " + rootHandle.name); return manifest; }
+
+  for await (const [name, handle] of guideCuesHandle.entries()) {
+    if (handle.kind !== "directory" || !name.endsWith(" Cues") || name.startsWith(".")) continue;
+    const langName = name.replace(" Cues", "");
+
+    let songSectionsHandle;
+    try { songSectionsHandle = await handle.getDirectoryHandle("Song Sections"); }
+    catch(e) { continue; }
+
+    const files = [];
+    window._cueHandles[langName] = {};
+    for await (const [fname, fhandle] of songSectionsHandle.entries()) {
+      if (fhandle.kind !== "file" || fname.startsWith("._") || fname.startsWith(".")) continue;
+      const ext = fname.split(".").pop().toLowerCase();
+      if (!AUDIO_EXT.has(ext)) continue;
+      files.push(fname);
+      window._cueHandles[langName][fname] = fhandle;
+    }
+    if (files.length > 0) {
+      manifest.languages.push(langName);
+      manifest.cues[langName] = files.sort();
+      log("  " + langName + ": " + files.length + " cues");
+    }
+  }
+  manifest.languages.sort();
+  return manifest;
+}
+
+// Firefox path: parse webkitRelativePath from fileList
+function buildManifestFromFileList(fileList) {
+  const manifest = { languages: [], cues: {} };
+  window._cueFiles = {};
+
+  for (const file of fileList) {
+    const parts = file.webkitRelativePath.split("/");
+    if (parts.length < 5 || parts[1] !== "GUIDE CUES" || parts[3] !== "Song Sections") continue;
+    const langFolder = parts[2];
+    if (!langFolder.endsWith(" Cues") || langFolder.startsWith(".")) continue;
+    const fname = parts[4];
+    if (fname.startsWith("._") || fname.startsWith(".")) continue;
+    const ext = fname.split(".").pop().toLowerCase();
+    if (!AUDIO_EXT.has(ext)) continue;
+    const langName = langFolder.replace(" Cues", "");
+    if (!window._cueFiles[langName]) window._cueFiles[langName] = {};
+    window._cueFiles[langName][fname] = file;
+    if (!manifest.cues[langName]) { manifest.cues[langName] = []; manifest.languages.push(langName); }
+    manifest.cues[langName].push(fname);
+  }
+
+  manifest.languages.sort();
+  for (const lang in manifest.cues) manifest.cues[lang].sort();
+  return manifest;
+}
+
+// ---- INIT ----
+
+// FS API path
+async function initFromRoot(rootHandle) {
+  window._rootHandle = rootHandle;
+  setFolderStatus(t("statusScanning", {name: rootHandle.name}));
+  log("Scanning: " + rootHandle.name);
+  const manifest = await buildManifestFromFS(rootHandle);
+  window._manifest = manifest;
+  if (manifest.languages.length === 0) {
+    setFolderStatus(t("statusNoLangFS"), "error");
+    return;
+  }
+  await populateFromManifest(manifest, rootHandle.name);
+}
+
+// Shared: populate language dropdown + load cue library
+async function populateFromManifest(manifest, folderName) {
+  const sel = document.getElementById("languageSelect");
+  sel.innerHTML = "";
+  manifest.languages.forEach(lang => {
+    const opt = document.createElement("option");
+    opt.value = lang; opt.textContent = lang;
+    if (lang === "English") opt.selected = true;
+    sel.appendChild(opt);
+  });
+  currentLanguage = manifest.languages.includes("English") ? "English" : manifest.languages[0];
+  sel.value = currentLanguage;
+
+  const label = folderName || manifest._folderName || "library";
+  setFolderStatus(t("statusLoaded", {label, count: manifest.languages.length}), "ok");
+  log("Languages: " + manifest.languages.join(", "));
+
+  await loadCueLibrary();
+}
+
+// ---- STARTUP ----
+
+window.addEventListener("DOMContentLoaded", async function() {
+  if ("showDirectoryPicker" in window) {
+    // Chrome / Edge: FS API with handle persistence
+    const saved = await loadSavedHandle();
+    if (!saved) return;
+    window._savedHandle = saved;
+    try {
+      const perm = await saved.queryPermission({ mode: "read" });
+      if (perm === "granted") { await initFromRoot(saved); return; }
+      setFolderStatus(t("statusPrevFolder", {name: saved.name}));
+      document.getElementById("allowAccessBtn").style.display = "inline-block";
+    } catch(e) { /* stale handle — user can re-pick */ }
+  } else {
+    // Firefox: Dexie persistence
+    setFolderStatus(t("statusChecking"));
+    const manifest = await loadFromDexie();
+    if (manifest && manifest.languages.length > 0) {
+      window._manifest = manifest;
+      await populateFromManifest(manifest);
+      document.getElementById("refreshCacheBtn").style.display = "inline-block";
+    } else {
+      setFolderStatus("");
+    }
+  }
+});
+
+// ---- LOGGING ----
+
+function log(msg) {
+  const el = document.getElementById("log");
+  el.textContent += msg + "\n"; el.scrollTop = el.scrollHeight;
+}
+function clearLog() { document.getElementById("log").textContent = ""; }
+
+// ---- NORMALIZE ----
+
+function filenameToCanonicalName(filename) {
+  return filename
+    .replace(/^.*?\s[-–]\s/, "")
+    .replace(/\.[^.]+$/, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toUpperCase();
+}
+
+function normalize(str) {
+  return str
+    .replace(/^.*?\s[-–]\s/, "")
+    .toLowerCase()
+    .replace(/[-_]/g, " ")
+    .replace(/\.[^.]+$/, "")
+    .replace(/[^a-z0-9\s]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// ---- CUE LIBRARY ----
+
+async function loadCueLibrary() {
+  if (!window._manifest) return;
+  const lang = currentLanguage;
+  const files = window._manifest.cues[lang];
+  if (!files || files.length === 0) { log("No cues for language: " + lang); return; }
+
+  cueLibrary = [];
+  cueFileMap = {};
+  const fuseData = [];
+  log("Loading " + files.length + " " + lang + " cues...");
+
+  for (const name of files) {
+    try {
+      const file = await getCueFile(lang, name);
+      if (!file) { log("  MISSING: " + name); continue; }
+      cueFileMap[name] = file;
+      cueLibrary.push(name);
+      fuseData.push({ file: name, normalized: normalize(name) });
+    } catch(e) { log("  ERROR: " + name + ": " + e.message); }
+  }
+  cueLibrary.sort();
+  canonicalNames = [...new Set(cueLibrary.map(filenameToCanonicalName))]
+    .filter(n => !/^[1-7]$/.test(n))
+    .sort();
+
+  fuse = new Fuse(fuseData, {
+    keys: ["normalized"], threshold: 0.4, includeScore: true, ignoreLocation: true
+  });
+
+  document.getElementById("cueList").innerHTML =
+    "<strong>" + lang + ": " + cueLibrary.length + " cues loaded</strong>";
+
+  log("Loaded " + cueLibrary.length + " cue files.");
+
+  if (data.locators.length > 0) {
+    data.locators.forEach(loc => {
+      const match = matchCue(loc.name);
+      loc.audio = match.file;
+      loc.confidence = match.confidence;
+      loc.suggestedName = match.file && match.file !== "(no match)" ? filenameToCanonicalName(match.file) : null;
+    });
+    render();
+  }
+}
+
+// ---- COUNT-OFF LOADER ----
+
+function loadCountoffFiles() {
+  countoffFileMap = {};
+  const targets = new Set(["1","2","3","4","5","6","intro"]);
+  for (const filename of Object.keys(cueFileMap)) {
+    const n = normalize(filename);
+    if (!targets.has(n)) continue;
+    const key = n === "intro" ? "Intro" : n;
+    if (!countoffFileMap[key]) countoffFileMap[key] = cueFileMap[filename];
+  }
+  if (!countoffFileMap["Intro"] && countoffFileMap["1"])
+    countoffFileMap["Intro"] = countoffFileMap["1"];
+  log("Count-off from cue library: " + Object.keys(countoffFileMap).sort().join(", "));
+}
+
+// ---- LANGUAGE SWITCHING ----
+
+async function switchLanguage(lang) {
+  currentLanguage = lang;
+  previewSchedule = [];
+  log("Switched language to: " + lang);
+  await loadCueLibrary();
+  loadCountoffFiles();
+}
+
+// ---- FUZZY MATCHING ----
+
+function matchCue(locatorName) {
+  const query = normalize(locatorName);
+  if (fuse) {
+    const results = fuse.search(query);
+    if (results.length > 0) {
+      const best = results[0];
+      const confidence = Math.round((1 - best.score) * 100);
+      log('  Match: "' + locatorName + '" -> normalized: "' + query +
+          '" -> ' + best.item.file + ' (confidence: ' + confidence + '%)');
+      return { file: best.item.file, confidence };
+    }
+    log('  No match for: "' + locatorName + '" (normalized: "' + query + '")');
+    return { file: "(no match)", confidence: 0 };
+  }
+  const n = locatorName.toLowerCase();
+  if (n.includes("verse"))     return { file: "verse.wav",       confidence: -1 };
+  if (n.includes("chorus"))    return { file: "chorus.wav",      confidence: -1 };
+  if (n.includes("bridge"))    return { file: "bridge.wav",      confidence: -1 };
+  if (n.includes("intro"))     return { file: "intro.wav",       confidence: -1 };
+  if (n.includes("outro"))     return { file: "outro.wav",       confidence: -1 };
+  if (n.includes("pre"))       return { file: "pre_chorus.wav",  confidence: -1 };
+  if (n.includes("post"))      return { file: "post_chorus.wav", confidence: -1 };
+  if (n.includes("interlude")) return { file: "interlude.wav",   confidence: -1 };
+  if (n.includes("tag"))       return { file: "tag.wav",         confidence: -1 };
+  return { file: "default.wav", confidence: -1 };
+}
+
+// ---- ALS PARSING ----
+
+async function processALS() {
+  stopPreview();
+  previewSchedule = [];
+  previewSeekOffset = 0;
+  clearLog();
+
+  const file = document.getElementById("alsFile").files[0];
+  if (!file) return;
+  log("Reading: " + file.name);
+
+  try {
+    const buffer = await file.arrayBuffer();
+    log("File size: " + buffer.byteLength + " bytes");
+
+    let xmlText;
+    try {
+      xmlText = pako.inflate(new Uint8Array(buffer), { to: "string" });
+      log("Decompressed OK (" + xmlText.length + " chars)");
+    } catch(e) { log("ERROR decompressing: " + e.message); return; }
+
+    alsXmlText = xmlText;
+    alsFileName = file.name;
+
+    const parser = new DOMParser();
+    const xml = parser.parseFromString(xmlText, "text/xml");
+    if (xml.getElementsByTagName("parsererror").length > 0) {
+      log("ERROR: XML parse failed"); return;
+    }
+    log("XML parsed OK");
+
+    const tempoEls = xml.getElementsByTagName("Tempo");
+    for (let t = 0; t < tempoEls.length; t++) {
+      const manual = tempoEls[t].getElementsByTagName("Manual");
+      if (manual.length > 0) {
+        const bpmVal = parseFloat(manual[0].getAttribute("Value"));
+        if (!isNaN(bpmVal) && bpmVal > 0) { sessionBPM = bpmVal; break; }
+      }
+    }
+    log("Session BPM: " + sessionBPM);
+
+    sessionTempoEvents = parseTempoEvents(xml);
+    if (sessionTempoEvents.length > 1)
+      log("Tempo automation: " + sessionTempoEvents.length + " events (" +
+          sessionTempoEvents[0].bpm + " → " +
+          sessionTempoEvents[sessionTempoEvents.length - 1].bpm + " BPM)");
+
+    const firstLoc = xmlText.indexOf("<Locator");
+    if (firstLoc === -1) log("WARNING: No <Locator> tags found");
+    else log("First Locator XML:\n" + xmlText.substring(firstLoc, firstLoc + 400));
+
+    const locators = parseLocators(xml);
+    log("Found " + locators.length + " locators");
+
+    const timeSigs = parseTimeSignatures(xml);
+    log("Found " + timeSigs.length + " time signature region(s)");
+    timeSigs.forEach(ts => log("  Beat " + ts.beat + ": " + ts.numerator + "/" + ts.denominator));
+
+    data.time_signatures = timeSigs;
+    const firstTS = timeSigs[0];
+    sessionTimeSig = firstTS.numerator + "/" + firstTS.denominator;
+    log("Session time signature: " + sessionTimeSig);
+
+    loadCountoffFiles();
+
+    log("\nMatching cues:");
+    data.locators = locators.map(loc => {
+      // Use time sig just *before* the locator so a change at the locator beat
+      // doesn't affect the bar length of the preceding bar.
+      const barLen = getBarLengthAt(loc.beat > 0 ? loc.beat - 0.001 : 0, timeSigs);
+      const cueBeat = Math.max(0, loc.beat - barLen);
+      const match = matchCue(loc.name);
+      const suggested = match.file && match.file !== "(no match)" ? filenameToCanonicalName(match.file) : null;
+      return { name: loc.name, originalName: loc.name, beat: loc.beat, bar_length: barLen,
+               cue_beat: cueBeat, audio: match.file, confidence: match.confidence, suggestedName: suggested };
+    });
+
+    render(); fitToWidth();
+    log("\nDone.");
+  } catch(e) { log("ERROR: " + e.message); log(e.stack); }
+}
+
+function parseLocators(xml) {
+  const results = [];
+  const locators = xml.getElementsByTagName("Locator");
+  log("Raw <Locator> elements: " + locators.length);
+  for (let i = 0; i < locators.length; i++) {
+    const loc = locators[i];
+    const timeEl = loc.getElementsByTagName("Time")[0];
+    const nameEl = loc.getElementsByTagName("Name")[0];
+    if (!timeEl || !nameEl) { log("  Locator " + i + ": missing Time or Name, skipping"); continue; }
+    const beat = parseFloat(timeEl.getAttribute("Value") || timeEl.textContent || "0");
+    const name = nameEl.getAttribute("Value") || nameEl.textContent || "";
+    if (name.trim() === "") { log("  Locator " + i + ": empty name, skipping"); continue; }
+    const skipNames = ["count off", "next song"];
+    if (skipNames.includes(name.trim().toLowerCase())) {
+      log("  Locator " + i + ": '" + name.trim() + "' skipped"); continue;
+    }
+    log("  Locator " + i + ': "' + name + '" @ beat ' + beat);
+    results.push({ name, beat });
+  }
+  return results;
+}
+
+function decodeEnumTimeSig(value) {
+  // Encoding: numerator = (value % 99) + 1, denominator = 2 ^ (value // 99)
+  const num = (value % 99) + 1;
+  const den = Math.pow(2, Math.floor(value / 99));
+  return { numerator: num, denominator: den };
+}
+
+function parseTimeSignatures(xml) {
+  const results = [];
+
+  // Primary: EnumEvent automation envelope in MasterTrack (Live 10+) or MainTrack (Live 12+)
+  const masterTrack = xml.querySelector("MasterTrack") || xml.querySelector("MainTrack");
+  if (masterTrack) {
+    const tsEl = masterTrack.querySelector("TimeSignature");
+    const atEl = tsEl && tsEl.querySelector("AutomationTarget");
+    const targetId = atEl && atEl.getAttribute("Id");
+    if (targetId) {
+      const envelopes = masterTrack.getElementsByTagName("AutomationEnvelope");
+      for (let i = 0; i < envelopes.length; i++) {
+        const pointee = envelopes[i].querySelector("PointeeId");
+        if (!pointee || pointee.getAttribute("Value") !== targetId) continue;
+        const events = envelopes[i].getElementsByTagName("EnumEvent");
+        log("TimeSignature envelope: " + events.length + " EnumEvent(s)");
+        for (let j = 0; j < events.length; j++) {
+          const ev = events[j];
+          const rawTime = parseFloat(ev.getAttribute("Time") || "0");
+          const beat = rawTime < 0 ? 0 : rawTime; // ghost event → beat 0
+          const { numerator, denominator } = decodeEnumTimeSig(parseInt(ev.getAttribute("Value") || "0"));
+          if (numerator > 0 && denominator > 0) {
+            // For ghost and beat-0 events, only keep one entry at beat 0 (prefer explicit beat 0)
+            const existingZero = results.findIndex(r => r.beat === 0);
+            if (beat === 0 && existingZero >= 0 && rawTime >= 0) {
+              results[existingZero] = { beat: 0, numerator, denominator }; // real beat-0 wins
+            } else if (beat === 0 && existingZero >= 0) {
+              // already have one at beat 0, skip ghost
+            } else {
+              results.push({ beat, numerator, denominator });
+            }
+            log("  TS at beat " + beat + ": " + numerator + "/" + denominator + " (value=" + ev.getAttribute("Value") + (rawTime < 0 ? ", ghost" : "") + ")");
+          }
+        }
+        break;
+      }
+    }
+  }
+
+  // Fallback: static <Numerator>/<Denominator> (Live < 10)
+  if (results.length === 0) {
+    log("No TimeSignature envelope — trying static fallback...");
+    const numEls = xml.getElementsByTagName("Numerator");
+    const denEls = xml.getElementsByTagName("Denominator");
+    if (numEls.length > 0 && denEls.length > 0) {
+      const nv = parseInt(numEls[0].getAttribute("Value") || "0");
+      const dv = parseInt(denEls[0].getAttribute("Value") || "0");
+      if (nv > 0 && dv > 0) {
+        results.push({ beat: 0, numerator: nv, denominator: dv });
+        log("  Static fallback: " + nv + "/" + dv);
+      }
+    }
+  }
+
+  if (results.length === 0) {
+    log("  Defaulting to 4/4");
+    results.push({ beat: 0, numerator: 4, denominator: 4 });
+  }
+  results.sort((a, b) => a.beat - b.beat);
+  return results;
+}
+
+function getBarLengthAt(beat, timeSigs) {
+  let active = timeSigs[0];
+  for (let i = 0; i < timeSigs.length; i++) {
+    if (timeSigs[i].beat <= beat) active = timeSigs[i]; else break;
+  }
+  return (active.numerator || 4) * (4 / (active.denominator || 4));
+}
+
+function getCountoffEndBeat() {
+  const [num, den] = sessionTimeSig.split("/").map(Number);
+  return 2 * num * (4 / den);
+}
+
+// Parse tempo automation from .als XML. Returns [{beat, bpm}, ...] sorted by beat.
+// Falls back to [{beat:0, bpm:sessionBPM}] when no automation is present.
+// Note: Ableton always writes a sentinel event at Time=-63072000 — filtered out (beat >= 0).
+function parseTempoEvents(xml) {
+  let targetId = null;
+  const tempoEls = xml.getElementsByTagName("Tempo");
+  log("Tempo automation: scanning " + tempoEls.length + " <Tempo> elements");
+  for (let i = 0; i < tempoEls.length; i++) {
+    const atEl = tempoEls[i].getElementsByTagName("AutomationTarget")[0];
+    if (atEl) { targetId = atEl.getAttribute("Id"); break; }
+  }
+  log("  AutomationTarget Id: " + (targetId || "NOT FOUND"));
+
+  if (targetId) {
+    const envelopes = xml.getElementsByTagName("AutomationEnvelope");
+    log("  AutomationEnvelope count: " + envelopes.length);
+    for (let i = 0; i < envelopes.length; i++) {
+      const pidEl = envelopes[i].getElementsByTagName("PointeeId")[0];
+      if (!pidEl) continue;
+      const pid = pidEl.getAttribute("Value");
+      if (pid !== targetId) continue;
+
+      log("  Matched envelope (PointeeId=" + pid + ")");
+
+      // Navigate Automation > Events > * (any tag name — dawtool doesn't check tag name either)
+      const automationEl = envelopes[i].getElementsByTagName("Automation")[0];
+      const eventsEl = automationEl ? automationEl.getElementsByTagName("Events")[0] : null;
+      log("  <Automation>: " + (automationEl ? "found" : "MISSING") +
+          ", <Events>: " + (eventsEl ? "found, " + eventsEl.children.length + " children" : "MISSING"));
+      if (eventsEl && eventsEl.children.length > 0)
+        log("  First child tag: <" + eventsEl.children[0].tagName + "> attrs: " +
+            Array.from(eventsEl.children[0].attributes).map(a => a.name + "=" + a.value).join(" "));
+
+      const autoEls = eventsEl ? Array.from(eventsEl.children) : [];
+
+      const events = [];
+      for (const ev of autoEls) {
+        const beat = parseFloat(ev.getAttribute("Time") || "0");
+        const bpm  = parseFloat(ev.getAttribute("Value") || "120");
+        // Filter negative-beat sentinel events (Ableton always writes one at -63072000)
+        if (!isNaN(beat) && !isNaN(bpm) && bpm > 0 && beat >= 0) events.push({ beat, bpm });
+      }
+      events.sort((a, b) => a.beat - b.beat);
+      log("  Valid events (beat≥0): " + events.length + " — " +
+          events.slice(0, 6).map(e => "beat " + e.beat + "=" + e.bpm.toFixed(1)).join(", ") +
+          (events.length > 6 ? " ..." : ""));
+
+      if (events.length > 0) {
+        if (events[0].beat > 0) events.unshift({ beat: 0, bpm: sessionBPM });
+        return events;
+      }
+      break;
+    }
+  }
+  log("  No tempo automation found — using constant BPM");
+  return [{ beat: 0, bpm: sessionBPM }];
+}
+
+// Converts beats → seconds, integrating piecewise-linear tempo curve.
+// Segments are linear BPM ramps; constant BPM is the degenerate case.
+function beatToTime(beat) {
+  const ev = sessionTempoEvents;
+  if (!ev || ev.length <= 1) return (beat / sessionBPM) * 60;
+  let time = 0;
+  for (let i = 0; i < ev.length; i++) {
+    const b1 = ev[i].beat, bpm1 = ev[i].bpm;
+    if (beat <= b1) break;
+    const hasNext = i + 1 < ev.length;
+    const b2   = hasNext ? ev[i + 1].beat : beat;
+    const bpm2 = hasNext ? ev[i + 1].bpm  : bpm1;
+    const segEnd = Math.min(beat, b2);
+    const segLen = segEnd - b1;
+    if (segLen <= 0) continue;
+    if (!hasNext || Math.abs(bpm2 - bpm1) < 1e-9) {
+      time += segLen * 60 / bpm1;
+    } else {
+      // ∫ 60/(bpm1 + slope·u) du from 0 to segLen  =  (60/slope)·ln(bpmAtEnd/bpm1)
+      const slope = (bpm2 - bpm1) / (b2 - b1);
+      time += (60 / slope) * Math.log((bpm1 + slope * segLen) / bpm1);
+    }
+    if (beat <= b2) break;
+  }
+  return time;
+}
+
+// Converts seconds → beats (inverse of beatToTime) via binary search.
+function timeToBeat(seconds) {
+  if (!sessionTempoEvents || sessionTempoEvents.length <= 1)
+    return (seconds * sessionBPM) / 60;
+  let lo = 0, hi = Math.max(1, seconds * (sessionBPM / 60) * 2);
+  while (beatToTime(hi) < seconds) hi *= 2;
+  for (let i = 0; i < 60; i++) {
+    const mid = (lo + hi) / 2;
+    if (beatToTime(mid) < seconds) lo = mid; else hi = mid;
+  }
+  return (lo + hi) / 2;
+}
+
+// ---- ZOOM / FOLLOW ----
+
+function zoomTimeline(factor) {
+  timelineZoom = Math.max(0.2, Math.min(6, timelineZoom * factor));
+  if (!isPlaying) drawTimeline();
+}
+function resetZoom() { fitToWidth(); }
+function fitToWidth() {
+  if (!data.locators.length) return;
+  const wrapper = document.getElementById("timelineWrapper");
+  const maxBeat = Math.max(...data.locators.map(l => l.beat)) + 16;
+  timelineZoom = Math.max(0.2, Math.min(6, (wrapper.clientWidth - 64) / (maxBeat * BASE_PX_PER_BEAT)));
+  if (!isPlaying) drawTimeline();
+}
+function toggleFollow() {
+  followPlayhead = !followPlayhead;
+  const btn = document.getElementById("followBtn");
+  btn.textContent = t(followPlayhead ? "followOn" : "followOff");
+  btn.style.opacity = followPlayhead ? "1" : "0.5";
+}
+
+// ---- RENDERING ----
+
+function render() { drawTimeline(); drawTable(); }
+
+function drawTimeline(playheadBeat = null) {
+  const canvas = document.getElementById("timeline");
+  const ctx = canvas.getContext("2d");
+  const PAD = 64, H = canvas.height, RULER = 24;
+  const LOC_Y = RULER + 10, LOC_H = 88;
+  const CUE_Y = LOC_Y + LOC_H + 14, CUE_H = 88;
+
+  if (data.locators.length === 0) {
+    canvas.width = Math.max(800, document.getElementById("timelineWrapper").clientWidth);
+    ctx.fillStyle = "#1a1a1a"; ctx.fillRect(0, 0, canvas.width, H); return;
+  }
+
+  const scale   = BASE_PX_PER_BEAT * timelineZoom;
+  const maxBeat = Math.max(...data.locators.map(l => l.beat)) + 16;
+  canvas.width  = PAD + maxBeat * scale;
+
+  ctx.fillStyle = "#1a1a1a"; ctx.fillRect(0, 0, canvas.width, H);
+  ctx.fillStyle = "#111";    ctx.fillRect(0, 0, PAD, H);
+  ctx.fillStyle = "#202020"; ctx.fillRect(PAD, 0, canvas.width, RULER);
+
+  ctx.strokeStyle = "#2e2e2e"; ctx.lineWidth = 1;
+  [RULER, LOC_Y + LOC_H + 7, CUE_Y + CUE_H + 6].forEach(y => {
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
+  });
+  ctx.beginPath(); ctx.moveTo(PAD, 0); ctx.lineTo(PAD, H); ctx.stroke();
+
+  ctx.fillStyle = "#555"; ctx.font = "11px Arial"; ctx.textAlign = "right";
+  ctx.fillText("Locators", PAD - 6, LOC_Y + LOC_H / 2 + 4);
+  ctx.fillText("Cues",     PAD - 6, CUE_Y + CUE_H / 2 + 4);
+  ctx.textAlign = "left";
+
+  let beat = 0, barNum = 1;
+  while (beat <= maxBeat) {
+    const barLen = getBarLengthAt(beat, data.time_signatures);
+    const x = PAD + beat * scale, nextX = PAD + (beat + barLen) * scale;
+    ctx.fillStyle = barNum % 2 === 0 ? "rgba(255,255,255,0.025)" : "transparent";
+    ctx.fillRect(x, RULER, nextX - x, H - RULER);
+    ctx.strokeStyle = "#2a2a2a"; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(x, RULER); ctx.lineTo(x, H); ctx.stroke();
+    ctx.strokeStyle = "#3a3a3a";
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, RULER); ctx.stroke();
+    ctx.fillStyle = "#666"; ctx.font = "10px Arial"; ctx.textAlign = "left";
+    ctx.fillText(barNum, x + 3, RULER - 6);
+    beat += barLen; barNum++;
+  }
+
+  data.time_signatures.forEach(ts => {
+    const x = PAD + ts.beat * scale;
+    ctx.fillStyle = "#3a3a3a"; ctx.font = "10px Arial"; ctx.textAlign = "left";
+    ctx.fillText(ts.numerator + "/" + ts.denominator, x + 4, H - 5);
+  });
+
+  data.locators.forEach(loc => {
+    const x = PAD + loc.beat * scale;
+    ctx.fillStyle = "#3366cc"; ctx.fillRect(x - 1, LOC_Y, 2, LOC_H);
+    ctx.fillStyle = "#4488ff"; ctx.beginPath();
+    ctx.moveTo(x, LOC_Y); ctx.lineTo(x + 6, LOC_Y + 7);
+    ctx.lineTo(x, LOC_Y + 14); ctx.lineTo(x - 6, LOC_Y + 7);
+    ctx.closePath(); ctx.fill();
+    ctx.fillStyle = "#ddeeff"; ctx.font = "bold 11px Arial"; ctx.textAlign = "left";
+    ctx.fillText(loc.name, x + 8, LOC_Y + 26);
+    ctx.fillStyle = "#5577aa"; ctx.font = "10px Arial";
+    ctx.fillText("beat " + loc.beat, x + 8, LOC_Y + 40);
+  });
+
+  data.locators.forEach(loc => {
+    const x = PAD + loc.cue_beat * scale;
+    ctx.fillStyle = "#992222"; ctx.fillRect(x - 1, CUE_Y, 2, CUE_H);
+    ctx.fillStyle = "#ff4444"; ctx.beginPath();
+    ctx.moveTo(x, CUE_Y); ctx.lineTo(x + 6, CUE_Y + 7);
+    ctx.lineTo(x, CUE_Y + 14); ctx.lineTo(x - 6, CUE_Y + 7);
+    ctx.closePath(); ctx.fill();
+    ctx.fillStyle = "#ffaaaa"; ctx.font = "bold 11px Arial"; ctx.textAlign = "left";
+    ctx.fillText(loc.name, x + 8, CUE_Y + 26);
+    ctx.fillStyle = "#884444"; ctx.font = "10px Arial";
+    ctx.fillText("beat " + loc.cue_beat, x + 8, CUE_Y + 40);
+  });
+
+  if (playheadBeat !== null && playheadBeat >= 0) {
+    const x = PAD + playheadBeat * scale;
+    ctx.save();
+    ctx.strokeStyle = "#00ff66"; ctx.lineWidth = 2;
+    ctx.shadowColor = "#00ff66"; ctx.shadowBlur = 8;
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+    ctx.restore();
+  }
+}
+
+function drawTable() {
+  const tbody = document.querySelector("#cueTable tbody");
+  tbody.innerHTML = "";
+  data.locators.forEach((loc, i) => {
+    const row = document.createElement("tr");
+    let confClass = "match-bad", confLabel = loc.confidence + "%";
+    if (loc.confidence === -1) { confClass = ""; confLabel = t("fallback"); }
+    else if (loc.confidence >= 80) confClass = "match-good";
+    else if (loc.confidence >= 50) confClass = "match-ok";
+
+    let audioCell;
+    if (cueLibrary.length > 0) {
+      let opts = '<option value="(no match)">' + t("noMatch") + '</option>';
+      cueLibrary.forEach(f => {
+        opts += '<option value="' + f + '"' + (f === loc.audio ? " selected" : "") + ">" + f + "</option>";
+      });
+      audioCell = '<select onchange="updateLoc(' + i + ',\'audio\',this.value)">' + opts + "</select>";
+    } else {
+      audioCell = '<input value="' + loc.audio + '" onchange="updateLoc(' + i + ',\'audio\',this.value)">';
+    }
+
+    let canonicalCell;
+    if (loc.suggestedName) {
+      const alreadyCorrect = loc.name === loc.suggestedName;
+      const esc = loc.suggestedName.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      canonicalCell = alreadyCorrect
+        ? '<td style="font-family:monospace;font-size:12px;color:#2a7a2a">' + esc + ' &#10003;</td>'
+        : '<td style="white-space:nowrap"><span style="font-family:monospace;font-size:12px">' + esc + '</span>'
+          + ' <button onclick="applyCanonicalName(' + i + ')" style="font-size:11px;padding:1px 6px">Apply</button></td>';
+    } else {
+      canonicalCell = "<td></td>";
+    }
+
+    let locatorCell;
+    if (canonicalNames.length > 0) {
+      let opts = canonicalNames.includes(loc.name) ? '' :
+        '<option value="' + loc.name.replace(/"/g, '&quot;') + '" selected>' + loc.name + '</option>';
+      canonicalNames.forEach(n => {
+        opts += '<option value="' + n + '"' + (n === loc.name ? ' selected' : '') + '>' + n + '</option>';
+      });
+      locatorCell = '<td><select onchange="updateLoc(' + i + ',\'name\',this.value)">' + opts + '</select></td>';
+    } else {
+      locatorCell = '<td><input value="' + loc.name + '" onchange="updateLoc(' + i + ',\'name\',this.value)"></td>';
+    }
+
+    row.innerHTML =
+      locatorCell +
+      "<td>" + loc.beat + "</td><td>" + loc.bar_length + "</td>" +
+      '<td><input type="number" value="' + loc.cue_beat +
+        '" onchange="updateLoc(' + i + ',\'cue_beat\',parseFloat(this.value))"></td>' +
+      canonicalCell +
+      "<td>" + audioCell + "</td>" +
+      '<td class="' + confClass + '">' + confLabel + "</td>";
+    tbody.appendChild(row);
+  });
+}
+
+function updateLoc(i, field, value) {
+  data.locators[i][field] = value;
+  if (field === "name") {
+    const match = matchCue(value);
+    data.locators[i].audio = match.file;
+    data.locators[i].confidence = match.confidence;
+    data.locators[i].suggestedName = match.file && match.file !== "(no match)" ? filenameToCanonicalName(match.file) : null;
+  }
+  if (field === "audio") {
+    data.locators[i].suggestedName = value && value !== "(no match)" ? filenameToCanonicalName(value) : null;
+  }
+  render();
+}
+
+// ---- CANONICAL NAME FIXER ----
+
+function applyCanonicalName(i) {
+  data.locators[i].name = data.locators[i].suggestedName;
+  render();
+}
+
+function applyAllSuggestions() {
+  data.locators.forEach(loc => {
+    if (loc.suggestedName && loc.name !== loc.suggestedName) loc.name = loc.suggestedName;
+  });
+  render();
+}
+
+async function exportFixedALS() {
+  if (!alsXmlText) return alert(t("alertNoALS"));
+  log("\n--- Exporting fixed .als ---");
+
+  const parser = new DOMParser();
+  const xml = parser.parseFromString(alsXmlText, "text/xml");
+  const locatorEls = xml.getElementsByTagName("Locator");
+  let renamed = 0;
+
+  for (let i = 0; i < locatorEls.length; i++) {
+    const loc = locatorEls[i];
+    const timeEl = loc.getElementsByTagName("Time")[0];
+    const nameEl = loc.getElementsByTagName("Name")[0];
+    if (!timeEl || !nameEl) continue;
+    const beat = parseFloat(timeEl.getAttribute("Value") || "0");
+    const origName = nameEl.getAttribute("Value") || nameEl.textContent || "";
+    const dataLoc = data.locators.find(d => Math.abs(d.beat - beat) < 0.001 && d.originalName === origName);
+    if (!dataLoc || dataLoc.name === dataLoc.originalName) continue;
+    nameEl.setAttribute("Value", dataLoc.name);
+    log('  "' + origName + '" → "' + dataLoc.name + '"');
+    renamed++;
+  }
+
+  if (renamed === 0) { log("No names changed — nothing to export."); return; }
+
+  const newXml = new XMLSerializer().serializeToString(xml);
+  const compressed = pako.gzip(new TextEncoder().encode(newXml));
+  const blob = new Blob([compressed], { type: "application/octet-stream" });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = (alsFileName || "session").replace(/\.als$/i, "") + "_fixed.als";
+  link.click();
+  log(renamed + " locator(s) renamed. Downloaded: " + link.download);
+}
+
+// ---- PREVIEW ----
+
+const SVG_PLAY  = '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" style="vertical-align:middle;margin-right:4px"><polygon points="5,3 19,12 5,21"/></svg>';
+const SVG_PAUSE = '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" style="vertical-align:middle;margin-right:4px"><rect x="5" y="3" width="4" height="18"/><rect x="15" y="3" width="4" height="18"/></svg>';
+
+async function buildPreviewSchedule() {
+  previewSchedule = []; previewMaxDuration = 0;
+  const tmpCtx = new AudioContext({ sampleRate: 48000 });
+  const decodedBuffers = {};
+
+  for (const loc of data.locators) {
+    const fileName = loc.audio;
+    if (!fileName || fileName === "(no match)" || decodedBuffers[fileName]) continue;
+    const file = cueFileMap[fileName];
+    if (!file) continue;
+    try { decodedBuffers[fileName] = await tmpCtx.decodeAudioData(await file.arrayBuffer()); }
+    catch(e) { log("  ERROR: " + e.message); }
+  }
+
+  const countoffDecodedBuffers = {};
+  if (Object.keys(countoffFileMap).length > 0) {
+    for (const [beatNum, file] of Object.entries(countoffFileMap)) {
+      try { countoffDecodedBuffers[beatNum] = await tmpCtx.decodeAudioData(await file.arrayBuffer()); }
+      catch(e) { log("  ERROR count-off: " + e.message); }
+    }
+  }
+  tmpCtx.close();
+
+  const hasCountoff = Object.keys(countoffDecodedBuffers).length > 0;
+  const countoffEnd = hasCountoff ? getCountoffEndBeat() : 0;
+  const sectionCueBeat = COUNT_OFF_SECTION_CUE_BEAT[sessionTimeSig] ?? 4;
+
+  // First valid locator's cue plays at the Intro slot of measure 2
+  let firstCuePlaced = false;
+  for (const loc of data.locators) {
+    const buf = decodedBuffers[loc.audio];
+
+    if (loc.cue_beat < countoffEnd) {
+      if (!firstCuePlaced && hasCountoff && buf) {
+        const offsetSec = beatToTime(sectionCueBeat);
+        if (offsetSec + buf.duration > previewMaxDuration) previewMaxDuration = offsetSec + buf.duration;
+        previewSchedule.push({ offset: offsetSec, buffer: buf });
+        firstCuePlaced = true;
+      }
+      continue;
+    }
+
+    if (!firstCuePlaced && hasCountoff && buf) {
+      const offsetSec4 = beatToTime(sectionCueBeat);
+      if (offsetSec4 + buf.duration > previewMaxDuration) previewMaxDuration = offsetSec4 + buf.duration;
+      previewSchedule.push({ offset: offsetSec4, buffer: buf });
+      firstCuePlaced = true;
+    }
+
+    if (!buf) continue;
+    const offsetSec = beatToTime(loc.cue_beat);
+    if (offsetSec + buf.duration > previewMaxDuration) previewMaxDuration = offsetSec + buf.duration;
+    previewSchedule.push({ offset: offsetSec, buffer: buf });
+  }
+
+  if (hasCountoff) {
+    for (const step of (COUNT_OFF_SCHEDULES[sessionTimeSig] ?? COUNT_OFF_SCHEDULES["4/4"])) {
+      const buf = countoffDecodedBuffers[step.num];
+      if (!buf) continue;
+      const offsetSec = beatToTime(step.beat);
+      if (offsetSec + buf.duration > previewMaxDuration) previewMaxDuration = offsetSec + buf.duration;
+      previewSchedule.push({ offset: offsetSec, buffer: buf });
+    }
+  }
+}
+
+function startPreviewFromTime(seekSec) {
+  previewSources.forEach(s => { try { s.stop(); } catch(e) {} });
+  previewSources = [];
+  if (previewAnimFrame) { cancelAnimationFrame(previewAnimFrame); previewAnimFrame = null; }
+  if (previewCtx) previewCtx.close();
+
+  previewCtx = new AudioContext({ sampleRate: 48000 });
+  const startAt = previewCtx.currentTime + 0.05;
+  previewStartContextTime = startAt;
+  previewSeekOffset = seekSec;
+
+  for (const item of previewSchedule) {
+    if (item.offset + item.buffer.duration <= seekSec) continue;
+    const src = previewCtx.createBufferSource();
+    src.buffer = item.buffer;
+    src.connect(previewCtx.destination);
+    src.start(startAt + Math.max(0, item.offset - seekSec), Math.max(0, seekSec - item.offset));
+    previewSources.push(src);
+  }
+
+  isPlaying = true;
+  document.getElementById("previewBtn").innerHTML = SVG_PAUSE + t("stop");
+
+  const totalDuration = previewMaxDuration + 0.5;
+  function animate() {
+    if (!isPlaying) return;
+    const elapsed = (previewCtx.currentTime - previewStartContextTime) + previewSeekOffset;
+    const currentBeat = timeToBeat(elapsed);
+    drawTimeline(currentBeat);
+    if (followPlayhead) {
+      const wrapper = document.getElementById("timelineWrapper");
+      const playheadX = 64 + currentBeat * BASE_PX_PER_BEAT * timelineZoom;
+      const visLeft = wrapper.scrollLeft, visRight = visLeft + wrapper.clientWidth;
+      if (playheadX > visRight - 80 || playheadX < visLeft)
+        wrapper.scrollLeft = playheadX - wrapper.clientWidth * 0.3;
+    }
+    if (elapsed >= totalDuration) { stopPreview(); return; }
+    previewAnimFrame = requestAnimationFrame(animate);
+  }
+  animate();
+}
+
+async function previewAudio() {
+  if (isPlaying) { stopPreview(); return; }
+  if (data.locators.length === 0) return alert(t("alertNoCueData"));
+  if (Object.keys(cueFileMap).length === 0) return alert(t("alertNoCuesLoaded"));
+  if (previewSchedule.length === 0) {
+    log("\n--- Building preview... ---");
+    await buildPreviewSchedule();
+    if (previewSchedule.length === 0) return alert(t("alertNoCues"));
+    log("Ready. " + previewSchedule.length + " cues.");
+  }
+  startPreviewFromTime(previewSeekOffset);
+}
+
+function stopPreview() {
+  if (isPlaying && previewCtx)
+    previewSeekOffset = (previewCtx.currentTime - previewStartContextTime) + previewSeekOffset;
+  isPlaying = false;
+  previewSources.forEach(s => { try { s.stop(); } catch(e) {} });
+  previewSources = [];
+  if (previewAnimFrame) { cancelAnimationFrame(previewAnimFrame); previewAnimFrame = null; }
+  if (previewCtx) { previewCtx.close(); previewCtx = null; }
+  const btn = document.getElementById("previewBtn");
+  if (btn) btn.innerHTML = SVG_PLAY + t("preview");
+  drawTimeline(previewSchedule.length ? timeToBeat(previewSeekOffset) : null);
+}
+
+// ---- WAV RENDERING ----
+
+async function renderWAV() {
+  if (data.locators.length === 0) return alert(t("alertNoCueDataRender"));
+  if (Object.keys(cueFileMap).length === 0) return alert(t("alertNoCuesLoadedRender"));
+
+  log("\n--- Rendering WAV ---");
+  log("BPM: " + sessionBPM);
+
+  const sampleRate = 48000, channels = 2;
+  const audioCtx = new AudioContext({ sampleRate });
+  const decodedBuffers = {};
+
+  for (const loc of data.locators) {
+    const fileName = loc.audio;
+    if (!fileName || fileName === "(no match)" || decodedBuffers[fileName]) continue;
+    const file = cueFileMap[fileName];
+    if (!file) { log("  WARNING: File not found: " + fileName); continue; }
+    try {
+      decodedBuffers[fileName] = await audioCtx.decodeAudioData(await file.arrayBuffer());
+      log("  Decoded: " + fileName + " (" + decodedBuffers[fileName].duration.toFixed(2) + "s)");
+    } catch(e) { log("  ERROR decoding " + fileName + ": " + e.message); }
+  }
+
+  const countoffDecodedBuffers = {};
+  const hasCountoff = Object.keys(countoffFileMap).length > 0;
+  if (hasCountoff) {
+    log("\nDecoding count-off files (" + sessionTimeSig + ")...");
+    for (const [beatNum, file] of Object.entries(countoffFileMap)) {
+      try {
+        countoffDecodedBuffers[beatNum] = await audioCtx.decodeAudioData(await file.arrayBuffer());
+        log("  Count-off [" + beatNum + "]: " + countoffDecodedBuffers[beatNum].duration.toFixed(2) + "s");
+      } catch(e) { log("  ERROR: [" + beatNum + "]: " + e.message); }
+    }
+  }
+
+  audioCtx.close();
+
+  const schedule = [];
+  let maxEnd = 0;
+  const countoffEnd = hasCountoff ? getCountoffEndBeat() : 0;
+  const sectionCueBeat = COUNT_OFF_SECTION_CUE_BEAT[sessionTimeSig] ?? 4;
+
+  // First valid locator's cue plays at the Intro slot of measure 2
+  let firstCuePlaced = false;
+  for (const loc of data.locators) {
+    const buf = decodedBuffers[loc.audio];
+
+    if (loc.cue_beat < countoffEnd) {
+      if (!firstCuePlaced && hasCountoff && buf) {
+        const offsetSec = beatToTime(sectionCueBeat);
+        if (offsetSec + buf.duration > maxEnd) maxEnd = offsetSec + buf.duration;
+        schedule.push({ offset: offsetSec, buffer: buf, name: loc.name + " [count-off]" });
+        log("  Section cue [" + loc.name + "] @ beat " + sectionCueBeat + " = " + offsetSec.toFixed(3) + "s (count-off slot)");
+        firstCuePlaced = true;
+      } else {
+        log("  Skipping [" + loc.name + "] beat " + loc.cue_beat + " (within count-off region)");
+      }
+      continue;
+    }
+
+    if (!firstCuePlaced && hasCountoff && buf) {
+      const offsetSec4 = beatToTime(sectionCueBeat);
+      if (offsetSec4 + buf.duration > maxEnd) maxEnd = offsetSec4 + buf.duration;
+      schedule.push({ offset: offsetSec4, buffer: buf, name: loc.name + " [count-off]" });
+      log("  Section cue [" + loc.name + "] @ beat " + sectionCueBeat + " = " + offsetSec4.toFixed(3) + "s (count-off slot)");
+      firstCuePlaced = true;
+    }
+
+    if (!buf) continue;
+    const offsetSec = beatToTime(loc.cue_beat);
+    if (offsetSec + buf.duration > maxEnd) maxEnd = offsetSec + buf.duration;
+    schedule.push({ offset: offsetSec, buffer: buf, name: loc.name });
+    log("  Scheduled: " + loc.name + " -> " + loc.audio +
+        " @ " + offsetSec.toFixed(3) + "s (beat " + loc.cue_beat + ")");
+  }
+
+  if (hasCountoff && Object.keys(countoffDecodedBuffers).length > 0) {
+    log("\nScheduling count-off beats...");
+    for (const step of (COUNT_OFF_SCHEDULES[sessionTimeSig] ?? COUNT_OFF_SCHEDULES["4/4"])) {
+      const buf = countoffDecodedBuffers[step.num];
+      if (!buf) { log("  MISSING [" + step.num + "]"); continue; }
+      const offsetSec = beatToTime(step.beat);
+      if (offsetSec + buf.duration > maxEnd) maxEnd = offsetSec + buf.duration;
+      schedule.push({ offset: offsetSec, buffer: buf, name: "count-off [" + step.num + "]" });
+      log("  Count-off [" + step.num + "] @ beat " + step.beat + " = " + offsetSec.toFixed(3) + "s");
+    }
+  }
+
+  if (schedule.length === 0) return alert(t("alertNoRender"));
+
+  const totalDuration = maxEnd + 1;
+  const totalFrames = Math.ceil(totalDuration * sampleRate);
+  log("Total duration: " + totalDuration.toFixed(2) + "s"); log("Rendering offline...");
+
+  const offline = new OfflineAudioContext(channels, totalFrames, sampleRate);
+  for (const item of schedule) {
+    const source = offline.createBufferSource();
+    source.buffer = item.buffer; source.connect(offline.destination); source.start(item.offset);
+  }
+
+  const rendered = await offline.startRendering();
+  log("Render complete. Encoding WAV...");
+
+  const wavBlob = encodeWAV(rendered);
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(wavBlob);
+  link.download = "guide_cues.wav"; link.click();
+  log("Downloaded: guide_cues.wav (" + (wavBlob.size / 1024 / 1024).toFixed(2) + " MB)");
+  log("--- Done ---");
+}
+
+// ---- WAV ENCODER ----
+
+function encodeWAV(audioBuffer) {
+  const numChannels = audioBuffer.numberOfChannels;
+  const sampleRate = audioBuffer.sampleRate;
+  const blockAlign = numChannels * 2;
+  const numFrames = audioBuffer.length;
+  const dataSize = numFrames * blockAlign;
+  const buffer = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(buffer);
+  const channelData = [];
+  for (let ch = 0; ch < numChannels; ch++) channelData.push(audioBuffer.getChannelData(ch));
+
+  let offset = 0;
+  function writeString(s) { for (let i = 0; i < s.length; i++) view.setUint8(offset++, s.charCodeAt(i)); }
+
+  writeString("RIFF"); view.setUint32(offset, 36 + dataSize, true); offset += 4;
+  writeString("WAVE"); writeString("fmt ");
+  view.setUint32(offset, 16, true); offset += 4;
+  view.setUint16(offset, 1, true);  offset += 2;
+  view.setUint16(offset, numChannels, true); offset += 2;
+  view.setUint32(offset, sampleRate, true); offset += 4;
+  view.setUint32(offset, sampleRate * blockAlign, true); offset += 4;
+  view.setUint16(offset, blockAlign, true); offset += 2;
+  view.setUint16(offset, 16, true); offset += 2;
+  writeString("data"); view.setUint32(offset, dataSize, true); offset += 4;
+
+  for (let i = 0; i < numFrames; i++) {
+    for (let ch = 0; ch < numChannels; ch++) {
+      let s = Math.max(-1, Math.min(1, channelData[ch][i]));
+      s = s < 0 ? s * 0x8000 : s * 0x7FFF;
+      view.setInt16(offset, s, true); offset += 2;
+    }
+  }
+  return new Blob([buffer], { type: "audio/wav" });
+}
+
+// ---- TIMELINE INTERACTIONS ----
+
+document.addEventListener("keydown", function(e) {
+  if (e.code === "Space" && e.target.tagName !== "INPUT" && e.target.tagName !== "SELECT") {
+    e.preventDefault(); previewAudio();
+  }
+});
+
+document.getElementById("timeline").addEventListener("click", function(e) {
+  if (!data.locators.length) return;
+  const rect = this.getBoundingClientRect();
+  const beat = Math.max(0, (e.clientX - rect.left - 64) / (BASE_PX_PER_BEAT * timelineZoom));
+  const seekSec = beatToTime(beat);
+  if (isPlaying) startPreviewFromTime(seekSec);
+  else { previewSeekOffset = seekSec; drawTimeline(beat); }
+});
+
+document.getElementById("timelineWrapper").addEventListener("wheel", function(e) {
+  if (!e.ctrlKey && !e.metaKey && isPlaying && followPlayhead) {
+    followPlayhead = false;
+    const btn = document.getElementById("followBtn");
+    btn.textContent = t("followOff"); btn.style.opacity = "0.5";
+  }
+  if (e.ctrlKey || e.metaKey) {
+    e.preventDefault();
+    const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
+    const rect = this.getBoundingClientRect();
+    const cursorXInWrapper = e.clientX - rect.left + this.scrollLeft;
+    const beatAtCursor = Math.max(0, (cursorXInWrapper - 64) / (BASE_PX_PER_BEAT * timelineZoom));
+    timelineZoom = Math.max(0.2, Math.min(6, timelineZoom * factor));
+    if (!isPlaying) drawTimeline(previewSchedule.length ? timeToBeat(previewSeekOffset) : null);
+    this.scrollLeft = 64 + beatAtCursor * BASE_PX_PER_BEAT * timelineZoom - (e.clientX - rect.left);
+  }
+}, { passive: false });
+
+</script>
+</body>
+</html>
