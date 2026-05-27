@@ -8,7 +8,7 @@ A browser-based tool that reads an Ableton Live session (.als), identifies all l
 
 ## How It Works (High-Level Flow)
 
-1. **Open app** — Double-click `cue_creator_v1.1.html` in Chrome or Firefox. No server needed.
+1. **Open app** — Double-click `cue_creator_v1.3.html` in Chrome or Firefox. No server needed.
 2. **Select folder** — User picks the root folder containing `GUIDE CUES/`. Browser reads audio files directly via File System Access API (Chrome/Edge) or `webkitdirectory` input (Firefox).
 3. **Select language** — User picks from auto-populated dropdown.
 4. **Upload .als file** — Auto-triggers on file select. Decompresses gzip XML, parses locators, time signatures, BPM. Derives count-off files (1–6, Intro) from the loaded cue library.
@@ -22,7 +22,7 @@ A browser-based tool that reads an Ableton Live session (.als), identifies all l
 ## File Structure
 
 ```
-cue_creator_v1.1.html  -- App (HTML + CSS + JS). Open directly in Chrome or Firefox.
+cue_creator_v1.3.html  -- App (HTML + CSS + JS). Open directly in Chrome or Firefox.
 GUIDE CUES/            -- Section cue audio library (per-language). Also source of count-off files.
 CLAUDE.md              -- This project reference file.
 ```
@@ -31,7 +31,7 @@ CLAUDE.md              -- This project reference file.
 
 ## Running the App
 
-Double-click `cue_creator_v1.1.html` in Chrome or Firefox. No server, no Terminal.
+Double-click `cue_creator_v1.3.html` in Chrome or Firefox. No server, no Terminal.
 
 - **Chrome/Edge**: Uses File System Access API. Folder selection persists across sessions (IndexedDB handle). Zero clicks after first run.
 - **Firefox**: Uses `<input webkitdirectory>`. First run picks the folder and saves all audio to Dexie (IndexedDB). Subsequent runs auto-load from Dexie with no user gesture.
