@@ -7,7 +7,7 @@ Reads an Ableton Live session (`.als`), matches locators to audio cue files, and
 ## What's Included
 
 ```
-cue_creator_v1.2.html    ← the app (open this)
+cue_creator_v1.3.html    ← the app (open this)
 GUIDE CUES/              ← section cue audio library (bring your own)
 docs/                    ← user guides in 7 languages
 ```
@@ -24,7 +24,7 @@ docs/                    ← user guides in 7 languages
 
 ## Quick Start
 
-1. Double-click `cue_creator_v1.2.html` — opens in your default browser
+1. Double-click `cue_creator_v1.3.html` — opens in your default browser
 2. Click **Select Folder** and pick the folder containing `GUIDE CUES/`
 3. Select a **language** from the dropdown
 4. Drag your `.als` file onto the upload area (or click to browse)
